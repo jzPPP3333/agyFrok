@@ -13,7 +13,9 @@ import {
   evaluateRelayHook,
   getHandoffFilePath,
   getRelayChainDepth,
+  isRootConversationHookPayload,
   listRelaySnapshot,
+  queueManualRelay,
   savePluginSettings,
 } from '../lib/auto-relay.mjs';
 import { isAntigravityHubTarget, readDevToolsPort } from '../lib/cdp-bridge.mjs';
@@ -545,6 +547,18 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
     );
 
     const t0 = Date.now();
+    // Subagents / swarm workers must be silently ignored by hook evaluator
+    assert.equal(isRootConversationHookPayload({ parentConversationId: convRelay }), false);
+    assert.equal(isRootConversationHookPayload({ isSubagent: true }), false);
+    assert.deepEqual(
+      evaluateRelayHook(
+        'PreInvocation',
+        { conversationId: convRelay, transcriptPath, parentConversationId: '11111111-1111-1111-1111-111111111111' },
+        { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 },
+      ),
+      {},
+    );
+
     const pre1 = evaluateRelayHook(
       'PreInvocation',
       { conversationId: convRelay, transcriptPath, lastUserInput: '重构支付模块并跑完所有单测', workspacePaths: [fx.repoDir] },
@@ -552,7 +566,9 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
     );
     assert.equal(Array.isArray(pre1.injectSteps), true);
     assert.match(pre1.injectSteps[0].systemMessage.systemMessage, /write_file/);
-    assert.match(pre1.injectSteps[0].systemMessage.metadata.user_markdown, /78%/);
+    assert.match(pre1.injectSteps[0].systemMessage.systemMessage, /78%/);
+    // Must omit metadata for Antigravity 2.34+ protojson / ScrubInternalFields compatibility
+    assert.equal('metadata' in pre1.injectSteps[0].systemMessage, false);
 
     // Idempotent on second PreInvocation
     const pre2 = evaluateRelayHook(
@@ -577,7 +593,8 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 1000 },
     );
     assert.equal(postGraceful.terminationBehavior, 'terminate');
-    assert.match(postGraceful.injectSteps[0].systemMessage.metadata.user_markdown, /5 秒/);
+    assert.equal('metadata' in postGraceful.injectSteps[0].systemMessage, false);
+    assert.match(postGraceful.injectSteps[0].systemMessage.systemMessage, /5 秒/);
 
     const snapAwaiting = listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 1500 });
     assert.ok(snapAwaiting.activeJob);
@@ -609,7 +626,8 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 3000 },
     );
     assert.equal(postHard.terminationBehavior, 'terminate');
-    assert.match(postHard.injectSteps[0].systemMessage.metadata.user_markdown, /90% 硬红线兜底/);
+    assert.equal('metadata' in postHard.injectSteps[0].systemMessage, false);
+    assert.match(postHard.injectSteps[0].systemMessage.systemMessage, /90% 硬红线兜底/);
 
     // Sidecar relay processor claims & launches new continuation branch with model='pro' and NO zero-tool constraint!
     let launchedPrompt = '';
@@ -652,9 +670,12 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       { conversationId: c3, transcriptPath },
       { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 5000 },
     );
-    assert.match(fuseRes.injectSteps[0].systemMessage.metadata.user_markdown, /防循环熔断/);
+    assert.equal('metadata' in fuseRes.injectSteps[0].systemMessage, false);
+    assert.match(fuseRes.injectSteps[0].systemMessage.systemMessage, /防循环熔断/);
 
-    // 5. Normal Stop (NO_TOOL_CALL) at 95% without handoff must NOT re-run an already-finished task!
+    // 5. Normal Stop (NO_TOOL_CALL) at 95% without handoff must NOT re-run an already-finished task,
+    //    and MUST cancel any pending hard_failsafe countdown queued earlier in the turn;
+    //    whereas Stop(TERMINAL_CUSTOM_HOOK) preserves it, and Stop(MAX_TOKEN_BUDGET_EXCEEDED) queues immediate failsafe!
     const convDone = '44444444-bbbb-cccc-dddd-eeeeeeeeeeee';
     const doneLogs = path.join(fx.appDataDir, 'brain', convDone, '.system_generated', 'logs');
     fs.mkdirSync(doneLogs, { recursive: true });
@@ -667,6 +688,42 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       ].map((s) => JSON.stringify(s)).join('\n')}\n`,
       'utf8',
     );
+    // PreInvocation at >=90% should NOT inject a 75% soft warning
+    savePluginSettings({ autoRelayConfirmMode: CONFIRM_MODES.COUNTDOWN }, fx.pluginDataDir);
+    assert.deepEqual(
+      evaluateRelayHook(
+        'PreInvocation',
+        { conversationId: convDone, transcriptPath: doneTranscript },
+        { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 5800 },
+      ),
+      {},
+    );
+    // Manual relay dismiss should NOT suppress future automatic relay thresholds
+    const manualTest = queueManualRelay(convDone, {
+      pluginDataDir: fx.pluginDataDir,
+      appDataDir: fx.appDataDir,
+      confirmMode: CONFIRM_MODES.COUNTDOWN,
+      now: t0 + 5850,
+    });
+    assert.equal(manualTest.ok, true);
+    const manualDismiss = dismissRelayJob(manualTest.job.id, { pluginDataDir: fx.pluginDataDir, now: t0 + 5860 });
+    assert.equal(manualDismiss.dismissedUntilPct, 0);
+
+    // Mid-turn PostInvocation queues a hard_failsafe countdown, then Stop(TERMINAL_CUSTOM_HOOK) keeps it,
+    // while Stop(NO_TOOL_CALL) cancels an unlaunched hard_failsafe countdown so completed tasks don't hijack.
+    evaluateRelayHook(
+      'PostInvocation',
+      { conversationId: convDone, transcriptPath: doneTranscript },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 5900 },
+    );
+    assert.ok(listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 5910 }).activeJob);
+    evaluateRelayHook(
+      'Stop',
+      { conversationId: convDone, transcriptPath: doneTranscript, terminationReason: 'TERMINAL_CUSTOM_HOOK' },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 5920 },
+    );
+    assert.ok(listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 5920 }).activeJob);
+
     const stopNormal = evaluateRelayHook(
       'Stop',
       { conversationId: convDone, transcriptPath: doneTranscript, terminationReason: 'NO_TOOL_CALL' },
