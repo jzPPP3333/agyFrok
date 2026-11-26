@@ -469,10 +469,24 @@ test('MCP Server & Sidecar Cockpit handlers pass end-to-end JSON-RPC and REST co
     assert.doesNotThrow(() => new Function(overlaySrc));
     assert.equal(overlaySrc.includes('location.assign'), false);
 
-    // 4. Sidecar SDK resolution across symlinks
-    const sdk = await loadSidecarSdk();
-    assert.equal(typeof sdk.SidecarApp, 'function');
-    assert.equal(typeof sdk.Response, 'function');
+    // 4. Sidecar SDK resolution across symlinks / custom NODE_PATH (CI-safe on clean runners)
+    const fakeSdkDir = path.join(fx.root, 'fake_node_modules', 'sidecar_sdk');
+    fs.mkdirSync(fakeSdkDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeSdkDir, 'index.mjs'),
+      'export class SidecarApp {}\nexport class Response {}\n',
+      'utf8',
+    );
+    const prevNodePath = process.env.NODE_PATH;
+    process.env.NODE_PATH = path.join(fx.root, 'fake_node_modules');
+    try {
+      const sdk = await loadSidecarSdk();
+      assert.equal(typeof sdk.SidecarApp, 'function');
+      assert.equal(typeof sdk.Response, 'function');
+    } finally {
+      if (prevNodePath === undefined) delete process.env.NODE_PATH;
+      else process.env.NODE_PATH = prevNodePath;
+    }
   } finally {
     fx.cleanup();
   }
