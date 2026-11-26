@@ -1,6 +1,6 @@
 # AGY 时空驾驶舱协同规范（agy-fork-explorer）
 
-你已挂载插件 `agy-fork-explorer`，为 Antigravity 2.0 提供会话分支（Fork 树）、跨平台系统资源管理器（Finder / Explorer）定位、工作区文件树、256K 上下文防失忆逃生与历史导出能力。
+你已挂载插件 `agy-fork-explorer`，为 Antigravity 2.0 提供会话分支（Fork 树）、跨平台系统资源管理器（Finder / Explorer）定位、工作区文件树、512K 上下文防失忆自动接力与历史导出能力。
 
 ## 1. 何时使用 MCP 工具与内联卡片
 

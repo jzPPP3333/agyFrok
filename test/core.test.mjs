@@ -34,6 +34,7 @@ import { buildRevealCommand, openWithDefaultApp, revealInExplorer } from '../lib
 import { resolveFileUri, toFileUri } from '../lib/paths.mjs';
 import {
   cleanUserContent,
+  DEFAULT_COMPACTION_LIMIT,
   estimateTokens,
   exportConversation,
   listLocalSessions,
@@ -516,15 +517,37 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       fs.writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
     };
 
-    // 1. Exact API token metrics (200K / 256K = 78%) & post-compaction drop verification
+    // 0. Guard against Sidecar host shadcn CSS token collisions (--muted / --card / --border / --bg / --text)
+    for (const cssRel of ['sidecars/cockpit/styles.css', 'server/inline-card.html']) {
+      const cssRaw = fs.readFileSync(path.resolve(process.cwd(), cssRel), 'utf8');
+      assert.equal(/(^|[\s;{])--(muted|card|border|bg|text|accent)\s*:/m.test(cssRaw), false, `${cssRel} defines colliding CSS token`);
+      assert.equal(/var\(--(muted|card|border|bg|text|accent)\b/.test(cssRaw), false, `${cssRel} references colliding CSS token`);
+    }
+
+    // 1. Default window is 512K (512,000): 256K tokens = 50% healthy (must NOT trigger auto-relay!), 400K / 512K = 78%
+    assert.equal(DEFAULT_COMPACTION_LIMIT, 512_000);
+    writeTranscriptSteps([
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n测试 256K 在 512K 窗口下仅 50%\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-4-carbon-high', input_tokens: 16000, cache_read_tokens: 240000, output_tokens: 420, content: '已完成一半' },
+    ]);
+    const live50 = readLiveContextMetrics(transcriptPath);
+    assert.equal(live50.limitTokens, 512_000);
+    assert.equal(live50.percent, 50);
+    assert.equal(live50.level, 'healthy');
+    assert.deepEqual(
+      evaluateRelayHook('PostInvocation', { conversationId: convRelay, transcriptPath }, { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir }),
+      {},
+    );
+
     writeTranscriptSteps([
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n重构支付模块并跑完所有单测\n</USER_REQUEST>' },
-      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-pro', input_tokens: 18000, cache_read_tokens: 182000, output_tokens: 420, content: '已重构第一阶段接口' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-4-carbon-high', input_tokens: 18000, cache_read_tokens: 382000, output_tokens: 420, content: '已重构第一阶段接口' },
     ]);
 
     const parsed78 = parseConversationTranscript(convRelay, { appDataDir: fx.appDataDir });
     assert.equal(parsed78.context.tokenSource, 'api');
-    assert.equal(parsed78.context.usedTokens, 200000);
+    assert.equal(parsed78.context.usedTokens, 400000);
+    assert.equal(parsed78.context.limitTokens, 512000);
     assert.equal(parsed78.context.percent, 78);
 
     const live78 = readLiveContextMetrics(transcriptPath);
@@ -613,11 +636,11 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
     );
     assert.deepEqual(postAfterDismiss, {});
 
-    // 3. Switch to Silent 0s mode & hit 92% Hard Failsafe -> terminates and queues immediate launch!
+    // 3. Switch to Silent 0s mode & hit 92% Hard Failsafe (471K / 512K = 92%) -> terminates and queues immediate launch!
     savePluginSettings({ autoRelayConfirmMode: CONFIRM_MODES.SILENT }, fx.pluginDataDir);
     writeTranscriptSteps([
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n重构支付模块并跑完所有单测\n</USER_REQUEST>' },
-      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-pro', input_tokens: 16000, cache_read_tokens: 220000, output_tokens: 500, content: '正在修复最后 2 个单测' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-4-carbon-high', input_tokens: 21000, cache_read_tokens: 450000, output_tokens: 500, content: '正在修复最后 2 个单测' },
     ]);
 
     const postHard = evaluateRelayHook(
@@ -684,7 +707,7 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       doneTranscript,
       `${[
         { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n打包 zip\n</USER_REQUEST>' },
-        { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 10000, cache_read_tokens: 235000, content: '已打包完成' },
+        { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 16400, cache_read_tokens: 470000, content: '已打包完成' },
       ].map((s) => JSON.stringify(s)).join('\n')}\n`,
       'utf8',
     );
@@ -744,12 +767,12 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
     // 6. Post-compaction drop verification: appending a compacted step lowers real API usage immediately
     writeTranscriptSteps([
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n测试压缩回落\n</USER_REQUEST>' },
-      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 20000, cache_read_tokens: 200000, content: '压缩前' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 20000, cache_read_tokens: 495000, content: '压缩前' },
       { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 4000, cache_read_tokens: 31000, content: '压缩后' },
     ]);
     const liveDrop = readLiveContextMetrics(transcriptPath);
     assert.equal(liveDrop.usedTokens, 35000);
-    assert.equal(liveDrop.percent, 14);
+    assert.equal(liveDrop.percent, 7);
 
     // 6. End-to-end hook CLI stdin/stdout smoke test
     const hookScript = path.resolve(process.cwd(), 'hooks', 'on-hook.mjs');

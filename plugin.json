@@ -2,7 +2,7 @@
   "name": "agy-fork-explorer",
   "displayName": "agyFrok · AGY 时空驾驶舱（Fork 分支与资源管理器）",
   "version": "1.0.0",
-  "description": "为 Google Antigravity 2.0 补齐原生静默会话分支（Fork 树 + Git Worktree）、跨平台系统资源管理器（Finder/Explorer 定位）、256K 上下文防失忆逃生、全本地历史检索导出与极省 Token 双模分叉。",
+  "description": "为 Google Antigravity 2.0 补齐原生静默会话分支（Fork 树 + Git Worktree）、跨平台系统资源管理器（Finder/Explorer 定位）、512K 上下文防失忆自动接力、全本地历史检索导出与极省 Token 双模分叉。",
   "logo": "assets/logo.svg",
   "homepage": "https://github.com/jzPPP3333/agyFrok",
   "repository": "https://github.com/jzPPP3333/agyFrok",

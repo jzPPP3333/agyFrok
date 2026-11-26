@@ -3,7 +3,7 @@
   "args": ["main.mjs"],
   "restart_policy": "always",
   "display_name": "时空驾驶舱",
-  "description": "AGY 时空驾驶舱：可视化会话分支树（Fork + Git Worktree）、工作区与系统资源管理器（Finder/Explorer 定位）、256K 上下文防失忆预警、全本地历史检索导出及类 agy-powertools 原生右键/气泡增强。",
+  "description": "AGY 时空驾驶舱：可视化会话分支树（Fork + Git Worktree）、工作区与系统资源管理器（Finder/Explorer 定位）、512K 上下文防失忆自动接力、全本地历史检索导出及类 agy-powertools 原生右键/气泡增强。",
   "has_web_ui": true,
   "agent_permissions": {
     "allows_user_interactions": true

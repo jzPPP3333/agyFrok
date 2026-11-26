@@ -6,27 +6,27 @@
 <title>AGY Fork &amp; Explorer Card</title>
 <style>
   :root {
-    --bg: var(--color-background-primary, #141925);
-    --bg2: var(--color-background-secondary, #1c2436);
-    --border: var(--color-border-primary, #2b3752);
-    --text: var(--color-text-primary, #e7edf8);
-    --muted: var(--color-text-secondary, #8d9bb9);
-    --accent: #3b82f6;
-    --teal: #14b8a6;
-    --font: var(--font-sans, -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif);
-    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --fe-bg: var(--color-background-primary, #141925);
+    --fe-bg2: var(--color-background-secondary, #1c2436);
+    --fe-border: var(--color-border-primary, #2b3752);
+    --fe-text: var(--color-text-primary, #ecf1fb);
+    --fe-muted: var(--color-text-secondary, #9eb0d0);
+    --fe-accent: #3b82f6;
+    --fe-teal: #14b8a6;
+    --fe-font: var(--font-sans, -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif);
+    --fe-mono: "SF Mono", ui-monospace, Menlo, monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: transparent;
-    color: var(--text);
-    font-family: var(--font);
+    color: var(--fe-text);
+    font-family: var(--fe-font);
     font-size: 12.5px;
     padding: 4px;
   }
   .card {
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: var(--fe-bg);
+    border: 1px solid var(--fe-border);
     border-radius: 12px;
     padding: 10px 12px;
     display: flex;
@@ -34,25 +34,25 @@
     gap: 8px;
   }
   .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .title { font-weight: 700; font-size: 13px; }
-  .sub { font-size: 11px; color: var(--muted); }
+  .title { font-weight: 700; font-size: 13px; color: var(--fe-text); }
+  .sub { font-size: 11px; color: var(--fe-muted); }
   .list { display: flex; flex-direction: column; gap: 5px; }
   .row {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 6px 8px; border-radius: 8px; background: var(--bg2); border: 1px solid transparent; cursor: pointer;
+    padding: 6px 8px; border-radius: 8px; background: var(--fe-bg2); border: 1px solid transparent; cursor: pointer;
   }
-  .row:hover { border-color: var(--accent); }
+  .row:hover { border-color: var(--fe-accent); }
   .left { min-width: 0; flex: 1; }
-  .fname { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .fpath { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fname { font-weight: 600; font-size: 12px; color: var(--fe-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fpath { font-family: var(--fe-mono); font-size: 10.5px; color: var(--fe-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ops { display: flex; gap: 4px; flex-shrink: 0; }
   .btn {
-    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border: 1px solid var(--fe-border); background: var(--fe-bg); color: var(--fe-text);
     border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;
   }
-  .btn:hover { border-color: var(--accent); }
-  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--teal)); border-color: transparent; color: #fff; font-weight: 700; }
-  .status { font-size: 11px; color: var(--teal); min-height: 15px; }
+  .btn:hover { border-color: var(--fe-accent); }
+  .btn.primary { background: linear-gradient(135deg, var(--fe-accent), var(--fe-teal)); border-color: transparent; color: #fff; font-weight: 700; }
+  .status { font-size: 11px; color: var(--fe-teal); min-height: 15px; }
 </style>
 </head>
 <body>

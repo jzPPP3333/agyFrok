@@ -1,7 +1,7 @@
 ---
 name: fork-explorer
 description: >-
-  可视化管理 Antigravity 会话分支树（Fork 任意轮次、支持完整复刻/Amp 轻装交接/Git Worktree 隔离）、打开跨平台工作区与系统资源管理器（Finder / Explorer 定位）、查看 256K 上下文水位并一键轻装 Fork 逃生、以及全文检索与高保真导出历史会话。当用户提到「fork」「分支对话」「打开资源管理器」「在访达中显示」「打开文件夹」「导出对话」「找回历史」时使用。
+  可视化管理 Antigravity 会话分支树（Fork 任意轮次、支持完整复刻/Amp 轻装交接/Git Worktree 隔离）、打开跨平台工作区与系统资源管理器（Finder / Explorer 定位）、查看 512K 上下文水位并自动/手动 Fork 接力、以及全文检索与高保真导出历史会话。当用户提到「fork」「分支对话」「打开资源管理器」「在访达中显示」「打开文件夹」「导出对话」「找回历史」时使用。
 ---
 
 # AGY 时空驾驶舱（`/fork-explorer`）

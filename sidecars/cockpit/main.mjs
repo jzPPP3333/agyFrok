@@ -87,7 +87,11 @@ export function createCockpitHandlers(options = {}) {
 
   async function handleState(query = {}) {
     const settings = loadSettings(pluginDataDir);
-    const sessions = listLocalSessions({ appDataDir, limit: 40 });
+    const sessions = listLocalSessions({
+      appDataDir,
+      limit: 40,
+      compactionLimit: settings.compactionLimit,
+    });
     const convId = resolveActiveConvId(query.conversationId);
     const parsed = convId
       ? parseConversationTranscript(convId, {

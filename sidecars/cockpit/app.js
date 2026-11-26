@@ -278,7 +278,29 @@
     ]);
     modelSel.value = cfg.autoRelayModel === 'flash' ? 'flash' : 'pro';
 
-    const limInput = el('input', { className: 'input', type: 'number', value: cfg.compactionLimit || 256000 });
+    const limInput = el('input', { className: 'input', type: 'number', value: cfg.compactionLimit || 512000 });
+    const presetDefs = [
+      [200000, '200K'],
+      [256000, '256K'],
+      [512000, '512K·默认'],
+      [1000000, '1M'],
+    ];
+    const presetBtns = presetDefs.map(([val, text]) => {
+      const b = el('button', {
+        type: 'button',
+        className: `chip-btn${(Number(limInput.value) || 512000) === val ? ' active' : ''}`,
+        text,
+        onClick: () => {
+          limInput.value = String(val);
+          presetBtns.forEach((btn, idx) => btn.classList.toggle('active', presetDefs[idx][0] === val));
+        },
+      });
+      return b;
+    });
+    limInput.addEventListener('input', () => {
+      const cur = Number(limInput.value) || 0;
+      presetBtns.forEach((btn, idx) => btn.classList.toggle('active', presetDefs[idx][0] === cur));
+    });
     const lazyCb = el('input', { type: 'checkbox', checked: Boolean(cfg.zeroTokenLazy) });
 
     box.appendChild(el('div', { style: { fontWeight: '700' }, text: '⚙ 驾驶舱与自动接力设置（方案 B + C）' }));
@@ -288,7 +310,7 @@
         '🤖 开启高压自动 Fork 续跑（75% 亲笔交接单 + 90% 硬红线兜底）',
       ]),
     );
-    box.appendChild(el('div', { style: { fontSize: '10.5px', color: 'var(--muted)' }, text: '接力触发确认方式（一键切换）：' }));
+    box.appendChild(el('div', { style: { fontSize: '10.5px', color: 'var(--fe-muted)' }, text: '接力触发确认方式（一键切换）：' }));
     box.appendChild(el('div', { className: 'mode-group' }, [btnCountdown, btnSilent]));
 
     box.appendChild(
@@ -298,7 +320,11 @@
         el('label', { className: 'setting-field' }, ['倒计时秒数（3–15s）', countdownInput]),
         el('label', { className: 'setting-field' }, ['防循环熔断上限（次）', maxChainInput]),
         el('label', { className: 'setting-field' }, ['续跑默认模型', modelSel]),
-        el('label', { className: 'setting-field' }, ['压缩上限 Tokens', limInput]),
+        el('label', { className: 'setting-field' }, [
+          '上下文窗口 Tokens',
+          limInput,
+          el('div', { className: 'preset-chips' }, presetBtns),
+        ]),
       ]),
     );
 
@@ -324,7 +350,7 @@
               autoRelayCountdownSec: Number(countdownInput.value) || 5,
               autoRelayMaxChain: Number(maxChainInput.value) || 3,
               autoRelayModel: modelSel.value,
-              compactionLimit: Number(limInput.value) || 256000,
+              compactionLimit: Number(limInput.value) || 512000,
               zeroTokenLazy: lazyCb.checked,
             });
             state.settingsOpen = false;
@@ -524,6 +550,9 @@
         if (node.worktreeBranch) subParts.push(node.worktreeBranch);
         if (!subParts.length) subParts.push('主干');
 
+        const bLabel = node.branchLabel || 'main';
+        const cleanNodeTitle = String(node.title || '').replace(/^\[[^\]]+\]\s*/, '');
+
         const row = el(
           'div',
           {
@@ -534,7 +563,7 @@
             el('div', { className: 'row-main', style: { paddingLeft: `${indentPx}px` } }, [
               el('span', { className: laneClass }),
               el('div', { className: 'row-text' }, [
-                el('div', { className: 'row-title', text: `${node.depth > 0 ? '↳ ' : ''}${node.branchLabel || 'main'} · ${node.title || ''}` }),
+                el('div', { className: 'row-title', text: `${node.depth > 0 ? '↳ ' : ''}${bLabel} · ${cleanNodeTitle}` }),
                 el('div', { className: 'row-sub', text: subParts.join(' · ') }),
               ]),
             ]),

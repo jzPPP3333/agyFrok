@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo.svg" width="84" height="84" alt="agyFrok Logo" />
   <h1>agyFrok · AGY 时空驾驶舱</h1>
-  <p><strong>为 Google Antigravity 2.0 补齐原生静默 Fork 分支树 + 跨平台系统资源管理器（Finder / Explorer）+ 256K 防失忆闭环</strong></p>
+  <p><strong>为 Google Antigravity 2.0 补齐原生静默 Fork 分支树 + 跨平台系统资源管理器（Finder / Explorer）+ 512K 防失忆自动接力</strong></p>
   <p>
     <a href="https://github.com/jzPPP3333/agyFrok/actions/workflows/ci.yml"><img src="https://github.com/jzPPP3333/agyFrok/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <img src="https://img.shields.io/badge/Zero%20Deps-Pure%20Node%20ESM-14b8a6" alt="Zero Dependencies" />

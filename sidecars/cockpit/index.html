@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AGY 时空驾驶舱 · Fork &amp; Explorer</title>
   <script src="/preload.js"></script>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=512k" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -33,7 +33,7 @@
     <section id="cdpDrawer" class="drawer hidden"></section>
     <section id="settingsDrawer" class="drawer hidden"></section>
 
-    <!-- Always-Visible Context 256K Health & Anti-Amnesia Rescue Bar -->
+    <!-- Always-Visible Context 512K Health & Anti-Amnesia Rescue Bar -->
     <section id="contextBar" class="ctx-strip">
       <div class="ctx-info">
         <div class="ctx-head">
@@ -42,7 +42,7 @@
         </div>
         <div class="ctx-track"><div id="ctxFill" class="ctx-fill" style="width:0%"></div></div>
       </div>
-      <button id="rescueForkBtn" class="btn btn-teal btn-sm" type="button" title="提炼核心决策并 Fork 到干净新会话，彻底避开 256K 静默压缩失忆">
+      <button id="rescueForkBtn" class="btn btn-teal btn-sm" type="button" title="提炼核心决策并 Fork 到干净新会话，避开 512K 压缩失忆">
         ⚡ 轻装 Fork
       </button>
     </section>
@@ -189,6 +189,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=512k"></script>
 </body>
 </html>
