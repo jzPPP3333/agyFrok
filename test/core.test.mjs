@@ -544,7 +544,7 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
       fx.pluginDataDir,
     );
 
-    const t0 = 1_700_000_000_000;
+    const t0 = Date.now();
     const pre1 = evaluateRelayHook(
       'PreInvocation',
       { conversationId: convRelay, transcriptPath, lastUserInput: '重构支付模块并跑完所有单测', workspacePaths: [fx.repoDir] },
@@ -654,7 +654,37 @@ test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdow
     );
     assert.match(fuseRes.injectSteps[0].systemMessage.metadata.user_markdown, /防循环熔断/);
 
-    // 5. Post-compaction drop verification: appending a compacted step lowers real API usage immediately
+    // 5. Normal Stop (NO_TOOL_CALL) at 95% without handoff must NOT re-run an already-finished task!
+    const convDone = '44444444-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const doneLogs = path.join(fx.appDataDir, 'brain', convDone, '.system_generated', 'logs');
+    fs.mkdirSync(doneLogs, { recursive: true });
+    const doneTranscript = path.join(doneLogs, 'transcript.jsonl');
+    fs.writeFileSync(
+      doneTranscript,
+      `${[
+        { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n打包 zip\n</USER_REQUEST>' },
+        { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 10000, cache_read_tokens: 235000, content: '已打包完成' },
+      ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+      'utf8',
+    );
+    const stopNormal = evaluateRelayHook(
+      'Stop',
+      { conversationId: convDone, transcriptPath: doneTranscript, terminationReason: 'NO_TOOL_CALL' },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 6000 },
+    );
+    assert.deepEqual(stopNormal, {});
+    assert.equal(listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 6000 }).activeJob, null);
+
+    // Forced Stop (MAX_TOKEN_BUDGET_EXCEEDED) MUST still queue immediate failsafe relay!
+    evaluateRelayHook(
+      'Stop',
+      { conversationId: convDone, transcriptPath: doneTranscript, terminationReason: 'MAX_TOKEN_BUDGET_EXCEEDED' },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 6100 },
+    );
+    const forcedSnap = listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 6100 });
+    assert.ok(forcedSnap.activeJob && forcedSnap.activeJob.conversationId === convDone && forcedSnap.activeJob.status === 'queued');
+
+    // 6. Post-compaction drop verification: appending a compacted step lowers real API usage immediately
     writeTranscriptSteps([
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n测试压缩回落\n</USER_REQUEST>' },
       { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 20000, cache_read_tokens: 200000, content: '压缩前' },
