@@ -26,7 +26,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "test": "node --test test",
+    "test": "node --test",
     "validate": "agy plugin validate --strict .",
     "dev:cockpit": "node sidecars/cockpit/main.mjs --standalone",
     "dev:mcp": "node server/mcp-server.mjs"
