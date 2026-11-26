@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="14" y1="14" x2="114" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="28" y1="30" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="55%" stop-color="#2DD4BF"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="104" height="104" rx="24" fill="url(#bg)" stroke="#334155" stroke-width="3"/>
+  <!-- Folder silhouette -->
+  <path d="M30 45C30 40.5817 33.5817 37 38 37H53.5L60.5 44H90C94.4183 44 98 47.5817 98 52V85C98 89.4183 94.4183 93 90 93H38C33.5817 93 30 89.4183 30 85V45Z" fill="#1E293B" stroke="url(#accent)" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Git Fork Graph inside folder -->
+  <path d="M49 58V80" stroke="#38BDF8" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M49 70C49 63 75 65 75 58" stroke="#2DD4BF" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="49" cy="56" r="5.5" fill="#0F172A" stroke="#38BDF8" stroke-width="3.5"/>
+  <circle cx="75" cy="56" r="5.5" fill="#0F172A" stroke="#2DD4BF" stroke-width="3.5"/>
+  <circle cx="49" cy="81" r="5.5" fill="#818CF8" stroke="#E0E7FF" stroke-width="2.5"/>
+</svg>

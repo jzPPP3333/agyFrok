@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGY 时空驾驶舱 · Fork &amp; Explorer</title>
+  <script src="/preload.js"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">🌿</span>
+        <div class="brand-meta">
+          <div class="brand-title">AGY 时空驾驶舱</div>
+          <select id="sessionSelect" class="session-select" aria-label="切换会话"></select>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="cdpPill" class="status-pill" type="button" title="类 agy-powertools 原生界面注入状态">
+          <span class="dot" id="cdpDot"></span>
+          <span id="cdpLabel">原生增强</span>
+        </button>
+        <button id="refreshBtn" class="icon-btn" type="button" title="立即刷新">↻</button>
+        <button id="themeBtn" class="icon-btn" type="button" title="切换浅色/深色主题">◐</button>
+        <button id="settingsBtn" class="icon-btn" type="button" title="驾驶舱设置">⚙</button>
+      </div>
+    </header>
+
+    <!-- Collapsible CDP Info / Settings Drawer -->
+    <section id="cdpDrawer" class="drawer hidden"></section>
+    <section id="settingsDrawer" class="drawer hidden"></section>
+
+    <!-- Always-Visible Context 256K Health & Anti-Amnesia Rescue Bar -->
+    <section id="contextBar" class="ctx-strip">
+      <div class="ctx-info">
+        <div class="ctx-head">
+          <span id="ctxTitle">🧠 Context 水位计算中…</span>
+          <span id="ctxBadge" class="ctx-tag">0%</span>
+        </div>
+        <div class="ctx-track"><div id="ctxFill" class="ctx-fill" style="width:0%"></div></div>
+      </div>
+      <button id="rescueForkBtn" class="btn btn-teal btn-sm" type="button" title="提炼核心决策并 Fork 到干净新会话，彻底避开 256K 静默压缩失忆">
+        ⚡ 轻装 Fork
+      </button>
+    </section>
+
+    <!-- 3-Tab Navigation (Option B) -->
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="fork" role="tab" aria-selected="true">🌿 分支图</button>
+      <button class="tab" data-tab="explorer" role="tab" aria-selected="false">📂 资源管理器</button>
+      <button class="tab" data-tab="history" role="tab" aria-selected="false">🕒 历史/快照</button>
+    </nav>
+
+    <!-- TAB 1: FORK GRAPH & TURN PICKER -->
+    <main class="main-scroll">
+      <section id="panel-fork" class="tab-panel">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">会话分支谱系（Git-Graph）</span>
+            <span id="branchCountBadge" class="pill-mini">1 分支</span>
+          </div>
+          <div id="forkGraphList" class="graph-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">选择分叉起点轮次</span>
+            <span id="turnCountBadge" class="pill-mini">0 轮</span>
+          </div>
+          <div id="turnTimelineList" class="turn-list"></div>
+        </div>
+
+        <div class="card fork-composer">
+          <div class="card-head">
+            <span class="card-title" id="forkAnchorLabel">分叉起点：当前最新轮次</span>
+          </div>
+          <div class="mode-group" id="forkModeGroup">
+            <button type="button" class="mode-pill active" data-mode="exact">完整复刻</button>
+            <button type="button" class="mode-pill" data-mode="handoff">Amp 轻装交接</button>
+            <button type="button" class="mode-pill" data-mode="files_only">仅携文件清单</button>
+          </div>
+          <div class="form-row">
+            <input id="branchNameInput" class="input" type="text" placeholder="分支名（可选，如 exp-refactor / clean-handoff）" />
+          </div>
+          <div class="form-row">
+            <textarea id="nextInstructionInput" class="textarea" rows="2" placeholder="可选：直接写下分叉后新分支的第一条指令…"></textarea>
+          </div>
+          <div class="check-row">
+            <label class="chk"><input id="optWorktree" type="checkbox" /> 同步创建 Git Worktree 隔离</label>
+            <label class="chk"><input id="optSnapshot" type="checkbox" checked /> 分叉前自动安全快照</label>
+          </div>
+          <div class="fork-submit-row">
+            <button id="execForkBtn" class="btn btn-primary full" type="button">🌿 从选定节点创建新分支会话</button>
+          </div>
+          <div id="forkResultBox" class="result-box hidden"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: WORKSPACE & OS EXPLORER -->
+      <section id="panel-explorer" class="tab-panel hidden">
+        <div class="card">
+          <div class="exp-root-bar">
+            <select id="workspaceSelect" class="input select-sm" aria-label="切换工作区目录"></select>
+            <button id="favRootBtn" class="icon-btn" type="button" title="收藏/取消收藏当前目录">☆</button>
+          </div>
+          <div class="quick-os-bar">
+            <button id="openRootFinderBtn" class="btn btn-sm" type="button">📂 访达打开</button>
+            <button id="openRootIdeBtn" class="btn btn-sm" type="button">💻 外部 IDE</button>
+            <button id="openRootTermBtn" class="btn btn-sm" type="button">⌨️ 终端</button>
+            <button id="toggleHiddenBtn" class="btn btn-sm" type="button" title="显示/隐藏 dotfiles">👁 隐藏</button>
+          </div>
+          <div class="search-row">
+            <input id="fileFilterInput" class="input" type="search" placeholder="🔍 实时筛选工作区文件或路径…" />
+          </div>
+        </div>
+
+        <!-- Pinned Current Session Artifacts (brain/) -->
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">🧠 当前会话产物（Artifacts / brain）</span>
+            <button id="openBrainFinderBtn" class="btn btn-xs" type="button">直达访达</button>
+          </div>
+          <div id="artifactsList" class="file-list compact"></div>
+        </div>
+
+        <!-- Workspace File Tree -->
+        <div class="card">
+          <div class="card-head">
+            <span id="treeBreadcrumb" class="card-title mono-ellipsis">./</span>
+            <span id="gitBranchPill" class="pill-mini"></span>
+          </div>
+          <div id="fileTreeList" class="file-list"></div>
+        </div>
+
+        <!-- Inline Preview Drawer -->
+        <div id="previewCard" class="card preview-card hidden">
+          <div class="card-head">
+            <span id="previewTitle" class="card-title mono-ellipsis">预览</span>
+            <div class="row-ops">
+              <button id="previewFinderBtn" class="btn btn-xs" type="button">访达</button>
+              <button id="previewDefaultBtn" class="btn btn-xs" type="button">默认打开</button>
+              <button id="previewCloseBtn" class="icon-btn xs" type="button">×</button>
+            </div>
+          </div>
+          <div id="previewBody" class="preview-body"></div>
+        </div>
+      </section>
+
+      <!-- TAB 3: HISTORY SEARCH, EXPORT & GIT SNAPSHOTS -->
+      <section id="panel-history" class="tab-panel hidden">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">全本地会话检索与导出（含 Scratch 隐藏会话）</span>
+          </div>
+          <div class="search-row">
+            <input id="historySearchInput" class="input" type="search" placeholder="🔍 搜索提示词、回答内容或文件路径…" />
+            <button id="historySearchBtn" class="btn btn-sm" type="button">检索</button>
+          </div>
+          <div class="export-bar">
+            <button id="exportActiveMdBtn" class="btn btn-sm" type="button">📄 导出当前会话 MD</button>
+            <button id="exportActiveJsonBtn" class="btn btn-sm" type="button">{ } 导出 JSON</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">💾 Git 无侵入安全快照</span>
+            <button id="createSnapBtn" class="btn btn-xs btn-teal" type="button">+ 立即快照</button>
+          </div>
+          <div id="snapshotsList" class="snapshot-list"></div>
+          <div id="snapshotDiffBox" class="diff-box hidden"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">🌳 隔离 Git Worktree 列表</span>
+          </div>
+          <div id="worktreesList" class="snapshot-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

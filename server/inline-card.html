@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AGY Fork &amp; Explorer Card</title>
+<style>
+  :root {
+    --bg: var(--color-background-primary, #141925);
+    --bg2: var(--color-background-secondary, #1c2436);
+    --border: var(--color-border-primary, #2b3752);
+    --text: var(--color-text-primary, #e7edf8);
+    --muted: var(--color-text-secondary, #8d9bb9);
+    --accent: #3b82f6;
+    --teal: #14b8a6;
+    --font: var(--font-sans, -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif);
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12.5px;
+    padding: 4px;
+  }
+  .card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .title { font-weight: 700; font-size: 13px; }
+  .sub { font-size: 11px; color: var(--muted); }
+  .list { display: flex; flex-direction: column; gap: 5px; }
+  .row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 8px; border-radius: 8px; background: var(--bg2); border: 1px solid transparent; cursor: pointer;
+  }
+  .row:hover { border-color: var(--accent); }
+  .left { min-width: 0; flex: 1; }
+  .fname { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fpath { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ops { display: flex; gap: 4px; flex-shrink: 0; }
+  .btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--teal)); border-color: transparent; color: #fff; font-weight: 700; }
+  .status { font-size: 11px; color: var(--teal); min-height: 15px; }
+</style>
+</head>
+<body>
+  <div id="root" class="card">
+    <div class="sub">正在加载卡片数据…</div>
+  </div>
+  <script>
+  (() => {
+    let reqId = 1;
+    const pending = new Map();
+    let hostCapabilities = {};
+
+    function sendRpc(method, params = {}) {
+      const id = reqId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+      });
+    }
+
+    function sendNotification(method, params = {}) {
+      window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+    }
+
+    function reportSize() {
+      const h = Math.min(760, Math.max(96, document.documentElement.scrollHeight + 8));
+      sendNotification('ui/notifications/size-changed', { height: h });
+    }
+
+    function applyTheme(ctx) {
+      if (!ctx) return;
+      if (ctx.styles && ctx.styles.variables) {
+        for (const [k, v] of Object.entries(ctx.styles.variables)) {
+          document.documentElement.style.setProperty(k, v);
+        }
+      }
+    }
+
+    function el(tag, opts = {}, kids = []) {
+      const n = document.createElement(tag);
+      if (opts.className) n.className = opts.className;
+      if (opts.text !== undefined) n.textContent = String(opts.text);
+      if (opts.onClick) n.addEventListener('click', opts.onClick);
+      if (opts.onDblclick) n.addEventListener('dblclick', opts.onDblclick);
+      for (const c of kids) if (c) n.appendChild(c);
+      return n;
+    }
+
+    function render(data) {
+      const root = document.getElementById('root');
+      root.replaceChildren();
+      const statusEl = el('div', { className: 'status', text: '' });
+      const setStatus = (m) => { statusEl.textContent = m; reportSize(); };
+
+      if (!data) {
+        root.appendChild(el('div', { className: 'sub', text: '暂无卡片内容' }));
+        reportSize();
+        return;
+      }
+
+      if (data.cardType === 'fork') {
+        root.appendChild(el('div', { className: 'head' }, [
+          el('div', { className: 'title', text: '🌿 分支已就绪 · ' + (data.branchLabel || 'fork') }),
+          el('div', { className: 'sub', text: 'Turn #' + (data.forkedFromTurn || 0) + ' · ' + (data.mode || 'exact') }),
+        ]));
+        if (data.worktree?.worktreePath) {
+          root.appendChild(el('div', { className: 'fpath', text: '🌳 Worktree: ' + data.worktree.worktreePath }));
+        }
+        if (data.snapshot?.id) {
+          root.appendChild(el('div', { className: 'fpath', text: '💾 快照: ' + data.snapshot.id }));
+        }
+        const ops = el('div', { className: 'ops' }, [
+          !data.launched && hostCapabilities.message
+            ? el('button', {
+                className: 'btn primary',
+                text: '🚀 一键拉起新分支会话',
+                onClick: async () => {
+                  setStatus('正在向宿主创建新分支会话…');
+                  try {
+                    const res = await sendRpc('ui/message', {
+                      role: 'user',
+                      content: { type: 'text', text: data.prompt },
+                      _meta: { 'com.google.antigravity/message': { target: 'new' } },
+                    });
+                    const newId = res?._meta?.['com.google.antigravity/message']?.conversationId || '';
+                    if (newId) {
+                      await sendRpc('tools/call', {
+                        name: 'register_fork_child',
+                        arguments: {
+                          parentConversationId: data.parentConversationId,
+                          newConversationId: newId,
+                          branchLabel: data.branchLabel,
+                          forkedFromTurn: data.forkedFromTurn,
+                          mode: data.mode,
+                          worktreePath: data.worktree?.worktreePath || '',
+                          worktreeBranch: data.worktree?.branchName || '',
+                          seedFilePath: data.seedFilePath || '',
+                        },
+                      });
+                      setStatus('✅ 新分支会话已拉起并写入谱系树：' + newId);
+                    } else {
+                      setStatus('✅ 已发送分支消息到新会话');
+                    }
+                  } catch (err) {
+                    setStatus('❌ 拉起失败：' + (err?.message || err));
+                  }
+                },
+              })
+            : null,
+          el('button', {
+            className: 'btn',
+            text: '📂 访达定位种子文件',
+            onClick: async () => {
+              await sendRpc('tools/call', { name: 'reveal_in_explorer', arguments: { path: data.seedFilePath } });
+              setStatus('已在系统资源管理器中定位种子文件');
+            },
+          }),
+          data.worktree?.worktreePath
+            ? el('button', {
+                className: 'btn',
+                text: '🌳 打开 Worktree',
+                onClick: async () => {
+                  await sendRpc('tools/call', { name: 'reveal_in_explorer', arguments: { path: data.worktree.worktreePath } });
+                  setStatus('已打开 Worktree 目录');
+                },
+              })
+            : null,
+        ]);
+        root.appendChild(ops);
+        root.appendChild(statusEl);
+        reportSize();
+        return;
+      }
+
+      // Default: Codex-style file delivery card
+      const revealText = data.platform === 'darwin' ? '访达' : '资源管理器';
+      root.appendChild(el('div', { className: 'head' }, [
+        el('div', { className: 'title', text: '📂 ' + (data.title || '本地交付文件') }),
+        el('div', { className: 'sub', text: '双击任意行定位' + revealText }),
+      ]));
+
+      const list = el('div', { className: 'list' });
+      for (const item of data.items || []) {
+        const doReveal = async () => {
+          await sendRpc('tools/call', { name: 'reveal_in_explorer', arguments: { path: item.path } });
+          setStatus('已在' + revealText + '定位：' + item.name);
+        };
+        list.appendChild(
+          el('div', { className: 'row', onDblclick: doReveal }, [
+            el('div', { className: 'left' }, [
+              el('div', { className: 'fname', text: (item.isDirectory ? '📁 ' : '📄 ') + item.name }),
+              el('div', { className: 'fpath', text: item.path }),
+            ]),
+            el('div', { className: 'ops' }, [
+              el('button', { className: 'btn primary', text: revealText, onClick: (e) => { e.stopPropagation(); void doReveal(); } }),
+              el('button', {
+                className: 'btn',
+                text: '默认打开',
+                onClick: async (e) => {
+                  e.stopPropagation();
+                  await sendRpc('tools/call', { name: 'open_file_default', arguments: { path: item.path } });
+                  setStatus('已用默认应用打开：' + item.name);
+                },
+              }),
+              !item.isDirectory
+                ? el('button', {
+                    className: 'btn',
+                    text: '原生Tab',
+                    onClick: async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await sendRpc('com.google.antigravity/toggle-aux-pane', { tabType: 'fileView', uri: item.uri });
+                        setStatus('已在原生侧栏 Tab 打开');
+                      } catch {
+                        setStatus('当前视图不支持原生 Tab，可点击默认打开');
+                      }
+                    },
+                  })
+                : null,
+              hostCapabilities.updateModelContext
+                ? el('button', {
+                    className: 'btn',
+                    text: '@引用',
+                    onClick: async (e) => {
+                      e.stopPropagation();
+                      await sendRpc('ui/update-model-context', {
+                        content: [{ type: 'text', text: '参考文件：' + item.path }],
+                      });
+                      setStatus('已将路径挂载到下条消息上下文');
+                    },
+                  })
+                : null,
+            ]),
+          ]),
+        );
+      }
+      root.appendChild(list);
+      root.appendChild(statusEl);
+      reportSize();
+    }
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.id && pending.has(msg.id)) {
+        const { resolve, reject } = pending.get(msg.id);
+        pending.delete(msg.id);
+        if (msg.error) reject(msg.error);
+        else resolve(msg.result);
+        return;
+      }
+      if (msg.method === 'ui/notifications/tool-result') {
+        render(msg.params?.structuredContent);
+      } else if (msg.method === 'ui/notifications/host-context-changed') {
+        applyTheme(msg.params);
+      }
+    });
+
+    sendRpc('ui/initialize', {
+      appInfo: { name: 'agy-fork-explorer-card', version: '1.0.0' },
+      appCapabilities: {},
+      protocolVersion: '2026-01-26',
+    })
+      .then((res) => {
+        hostCapabilities = res?.hostCapabilities || {};
+        applyTheme(res?.hostContext);
+        sendNotification('ui/notifications/initialized', {});
+        reportSize();
+      })
+      .catch(() => {});
+  })();
+  </script>
+</body>
+</html>
