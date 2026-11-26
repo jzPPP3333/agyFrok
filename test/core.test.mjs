@@ -7,8 +7,17 @@ import test from 'node:test';
 
 process.env.AGY_TEST_NO_START = '1';
 
+import {
+  CONFIRM_MODES,
+  dismissRelayJob,
+  evaluateRelayHook,
+  getHandoffFilePath,
+  getRelayChainDepth,
+  listRelaySnapshot,
+  savePluginSettings,
+} from '../lib/auto-relay.mjs';
 import { isAntigravityHubTarget, readDevToolsPort } from '../lib/cdp-bridge.mjs';
-import { buildForkTreeView, executeFork, extractConversationIdDeep, FORK_MODES, updateBranchMeta } from '../lib/fork-engine.mjs';
+import { buildForkTreeView, executeFork, extractConversationIdDeep, FORK_MODES, updateBranchMeta, upsertForkNode } from '../lib/fork-engine.mjs';
 import {
   createForkWorktree,
   createSafetySnapshot,
@@ -27,6 +36,7 @@ import {
   exportConversation,
   listLocalSessions,
   parseConversationTranscript,
+  readLiveContextMetrics,
   searchLocalSessions,
 } from '../lib/transcript-parser.mjs';
 import { listWorkspaceTree, readFilePreview, toggleFavoritePath } from '../lib/workspace-tree.mjs';
@@ -487,6 +497,181 @@ test('MCP Server & Sidecar Cockpit handlers pass end-to-end JSON-RPC and REST co
       if (prevNodePath === undefined) delete process.env.NODE_PATH;
       else process.env.NODE_PATH = prevNodePath;
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('auto-relay Scheme B+C: exact API tokens, 75% graceful handoff, 5s countdown dismiss, 90% failsafe silent launch, fuse & hook CLI', async () => {
+  const fx = makeTempFixture();
+  try {
+    const convRelay = '99999999-8888-7777-6666-555555555555';
+    const logsDir = path.join(fx.appDataDir, 'brain', convRelay, '.system_generated', 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, 'transcript.jsonl');
+
+    const writeTranscriptSteps = (steps) => {
+      fs.writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+    };
+
+    // 1. Exact API token metrics (200K / 256K = 78%) & post-compaction drop verification
+    writeTranscriptSteps([
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n重构支付模块并跑完所有单测\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-pro', input_tokens: 18000, cache_read_tokens: 182000, output_tokens: 420, content: '已重构第一阶段接口' },
+    ]);
+
+    const parsed78 = parseConversationTranscript(convRelay, { appDataDir: fx.appDataDir });
+    assert.equal(parsed78.context.tokenSource, 'api');
+    assert.equal(parsed78.context.usedTokens, 200000);
+    assert.equal(parsed78.context.percent, 78);
+
+    const live78 = readLiveContextMetrics(transcriptPath);
+    assert.equal(live78.ok, true);
+    assert.equal(live78.tokenSource, 'api');
+    assert.equal(live78.percent, 78);
+
+    // 2. Scheme B Soft Handoff (75% <= 78% < 90%) in default Countdown (Scheme C) mode
+    savePluginSettings(
+      {
+        autoRelayEnabled: true,
+        autoRelaySoftPercent: 75,
+        autoRelayHardPercent: 90,
+        autoRelayConfirmMode: CONFIRM_MODES.COUNTDOWN,
+        autoRelayCountdownSec: 5,
+        autoRelayModel: 'pro',
+        autoRelayMaxChain: 3,
+      },
+      fx.pluginDataDir,
+    );
+
+    const t0 = 1_700_000_000_000;
+    const pre1 = evaluateRelayHook(
+      'PreInvocation',
+      { conversationId: convRelay, transcriptPath, lastUserInput: '重构支付模块并跑完所有单测', workspacePaths: [fx.repoDir] },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 },
+    );
+    assert.equal(Array.isArray(pre1.injectSteps), true);
+    assert.match(pre1.injectSteps[0].systemMessage.systemMessage, /write_file/);
+    assert.match(pre1.injectSteps[0].systemMessage.metadata.user_markdown, /78%/);
+
+    // Idempotent on second PreInvocation
+    const pre2 = evaluateRelayHook(
+      'PreInvocation',
+      { conversationId: convRelay, transcriptPath },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 500 },
+    );
+    assert.deepEqual(pre2, {});
+
+    // AI authors high-fidelity handoff.md
+    const handoffPath = getHandoffFilePath(convRelay, fx.pluginDataDir);
+    fs.writeFileSync(
+      handoffPath,
+      '# 交接单\n- 原始目标：重构支付模块并跑完单测\n- 已完成：支付网关接口拆分\n- 下一步：修复 checkout.test.mjs 断言并运行 npm test\n',
+      'utf8',
+    );
+
+    // PostInvocation detects fresh handoff.md -> terminates old turn & queues 5s countdown job
+    const postGraceful = evaluateRelayHook(
+      'PostInvocation',
+      { conversationId: convRelay, transcriptPath, lastUserInput: '重构支付模块并跑完所有单测', workspacePaths: [fx.repoDir] },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 1000 },
+    );
+    assert.equal(postGraceful.terminationBehavior, 'terminate');
+    assert.match(postGraceful.injectSteps[0].systemMessage.metadata.user_markdown, /5 秒/);
+
+    const snapAwaiting = listRelaySnapshot({ pluginDataDir: fx.pluginDataDir, now: t0 + 1500 });
+    assert.ok(snapAwaiting.activeJob);
+    assert.equal(snapAwaiting.activeJob.status, 'awaiting_confirm');
+    assert.equal(snapAwaiting.activeJob.triggerMode, 'graceful');
+    assert.equal(snapAwaiting.activeJob.executeAfter, t0 + 6000);
+
+    // User clicks "暂不" -> dismisses and suppresses until 90% hard redline (and won't re-trigger from stale handoff.md)
+    const disRes = dismissRelayJob(snapAwaiting.activeJob.id, { pluginDataDir: fx.pluginDataDir, now: t0 + 2000 });
+    assert.equal(disRes.ok, true);
+    assert.equal(disRes.dismissedUntilPct, 90);
+    const postAfterDismiss = evaluateRelayHook(
+      'PostInvocation',
+      { conversationId: convRelay, transcriptPath },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 2500 },
+    );
+    assert.deepEqual(postAfterDismiss, {});
+
+    // 3. Switch to Silent 0s mode & hit 92% Hard Failsafe -> terminates and queues immediate launch!
+    savePluginSettings({ autoRelayConfirmMode: CONFIRM_MODES.SILENT }, fx.pluginDataDir);
+    writeTranscriptSteps([
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n重构支付模块并跑完所有单测\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', model: 'gemini-pro', input_tokens: 16000, cache_read_tokens: 220000, output_tokens: 500, content: '正在修复最后 2 个单测' },
+    ]);
+
+    const postHard = evaluateRelayHook(
+      'PostInvocation',
+      { conversationId: convRelay, transcriptPath, lastUserInput: '继续修完单测', workspacePaths: [fx.repoDir] },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 3000 },
+    );
+    assert.equal(postHard.terminationBehavior, 'terminate');
+    assert.match(postHard.injectSteps[0].systemMessage.metadata.user_markdown, /90% 硬红线兜底/);
+
+    // Sidecar relay processor claims & launches new continuation branch with model='pro' and NO zero-tool constraint!
+    let launchedPrompt = '';
+    let launchedMeta = null;
+    const launchedChildId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const cockpit = createCockpitHandlers({
+      appDataDir: fx.appDataDir,
+      pluginDataDir: fx.pluginDataDir,
+      getDefaultConvId: () => convRelay,
+      getDefaultWorkspace: () => fx.repoDir,
+      dryRunOs: true,
+      customLauncher: async (prompt, meta) => {
+        launchedPrompt = prompt;
+        launchedMeta = meta;
+        return { launched: true, channel: 'sidecar_sdk', conversationId: launchedChildId, projectId: 'proj-relay' };
+      },
+    });
+
+    const proc = await cockpit.processRelayQueueOnce({ now: t0 + 3100 });
+    assert.equal(proc.processed, true);
+    assert.equal(proc.result.ok, true);
+    assert.equal(proc.result.launched, true);
+    assert.equal(proc.result.newConversationId, launchedChildId);
+    assert.equal(launchedMeta.autoContinue, true);
+    assert.equal(launchedMeta.model, 'pro');
+    assert.match(launchedPrompt, /上一分支交接单/);
+    assert.match(launchedPrompt, /续跑指令/);
+    assert.equal(launchedPrompt.includes('严禁调用任何工具'), false);
+    assert.equal(getRelayChainDepth(launchedChildId, { pluginDataDir: fx.pluginDataDir }), 1);
+
+    // 4. Anti-infinite-loop fuse (maxChain = 3): chain depth 3 blocks further auto-relay
+    const c2 = '22222222-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const c3 = '33333333-bbbb-cccc-dddd-eeeeeeeeeeee';
+    upsertForkNode({ conversationId: c2, parentId: launchedChildId, isAutoRelay: true, tags: ['auto-relay'] }, { pluginDataDir: fx.pluginDataDir });
+    upsertForkNode({ conversationId: c3, parentId: c2, isAutoRelay: true, tags: ['auto-relay'] }, { pluginDataDir: fx.pluginDataDir });
+    assert.equal(getRelayChainDepth(c3, { pluginDataDir: fx.pluginDataDir }), 3);
+
+    const fuseRes = evaluateRelayHook(
+      'PreInvocation',
+      { conversationId: c3, transcriptPath },
+      { pluginDataDir: fx.pluginDataDir, appDataDir: fx.appDataDir, now: t0 + 5000 },
+    );
+    assert.match(fuseRes.injectSteps[0].systemMessage.metadata.user_markdown, /防循环熔断/);
+
+    // 5. Post-compaction drop verification: appending a compacted step lowers real API usage immediately
+    writeTranscriptSteps([
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\n测试压缩回落\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 20000, cache_read_tokens: 200000, content: '压缩前' },
+      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: 4000, cache_read_tokens: 31000, content: '压缩后' },
+    ]);
+    const liveDrop = readLiveContextMetrics(transcriptPath);
+    assert.equal(liveDrop.usedTokens, 35000);
+    assert.equal(liveDrop.percent, 14);
+
+    // 6. End-to-end hook CLI stdin/stdout smoke test
+    const hookScript = path.resolve(process.cwd(), 'hooks', 'on-hook.mjs');
+    const cliOut = execFileSync(process.execPath, [hookScript, 'PreInvocation'], {
+      input: JSON.stringify({ conversationId: c3, transcriptPath, hookEventName: 'PreInvocation' }),
+      env: { ...process.env, PLUGIN_DATA: fx.pluginDataDir, AGY_APP_DATA_DIR: fx.appDataDir },
+      encoding: 'utf8',
+    });
+    assert.doesNotThrow(() => JSON.parse(cliOut));
   } finally {
     fx.cleanup();
   }

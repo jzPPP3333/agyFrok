@@ -3,6 +3,16 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  claimNextReadyRelayJob,
+  completeRelayJob,
+  confirmRelayJob,
+  dismissRelayJob,
+  listRelaySnapshot,
+  loadPluginSettings,
+  queueManualRelay,
+  savePluginSettings,
+} from '../../lib/auto-relay.mjs';
 import { createCdpBridge } from '../../lib/cdp-bridge.mjs';
 import { buildForkTreeView, executeFork, extractConversationIdDeep, FORK_MODES, updateBranchMeta } from '../../lib/fork-engine.mjs';
 import {
@@ -23,11 +33,9 @@ import {
 } from '../../lib/os-explorer.mjs';
 import {
   isValidConversationId,
-  readJsonSafe,
   resolveAppDataDir,
   resolveFileUri,
   resolvePluginDataDir,
-  writeJsonAtomic,
 } from '../../lib/paths.mjs';
 import {
   DEFAULT_COMPACTION_LIMIT,
@@ -45,37 +53,13 @@ import {
 } from '../../lib/workspace-tree.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_SETTINGS = Object.freeze({
-  compactionLimit: DEFAULT_COMPACTION_LIMIT,
-  defaultForkMode: FORK_MODES.EXACT,
-  autoSnapshot: true,
-  defaultWorktree: false,
-  zeroTokenLazy: false,
-  showHidden: false,
-  cdpEnabled: true,
-});
 
 function loadSettings(pluginDataDir = '') {
-  const file = path.join(resolvePluginDataDir(pluginDataDir), 'settings.json');
-  return { ...DEFAULT_SETTINGS, ...(readJsonSafe(file, {}) || {}) };
+  return loadPluginSettings(pluginDataDir);
 }
 
 function saveSettings(patch = {}, pluginDataDir = '') {
-  const current = loadSettings(pluginDataDir);
-  const next = {
-    ...current,
-    ...(Number.isFinite(Number(patch.compactionLimit)) && Number(patch.compactionLimit) >= 32_000
-      ? { compactionLimit: Math.round(Number(patch.compactionLimit)) }
-      : {}),
-    ...(Object.values(FORK_MODES).includes(patch.defaultForkMode) ? { defaultForkMode: patch.defaultForkMode } : {}),
-    ...(typeof patch.autoSnapshot === 'boolean' ? { autoSnapshot: patch.autoSnapshot } : {}),
-    ...(typeof patch.defaultWorktree === 'boolean' ? { defaultWorktree: patch.defaultWorktree } : {}),
-    ...(typeof patch.zeroTokenLazy === 'boolean' ? { zeroTokenLazy: patch.zeroTokenLazy } : {}),
-    ...(typeof patch.showHidden === 'boolean' ? { showHidden: patch.showHidden } : {}),
-    ...(typeof patch.cdpEnabled === 'boolean' ? { cdpEnabled: patch.cdpEnabled } : {}),
-  };
-  writeJsonAtomic(path.join(resolvePluginDataDir(pluginDataDir), 'settings.json'), next);
-  return next;
+  return savePluginSettings(patch, pluginDataDir);
 }
 
 /**
@@ -177,6 +161,7 @@ export function createCockpitHandlers(options = {}) {
       externalApps: discoverExternalApps(),
       cdp: getCdpStatus(),
       settings,
+      relay: listRelaySnapshot({ pluginDataDir }),
       recentOps: getRecentExplorerOps().slice(0, 10),
     };
   }
@@ -191,6 +176,11 @@ export function createCockpitHandlers(options = {}) {
       mode: body.mode || settings.defaultForkMode,
       autoSmartHandoff: Boolean(body.autoSmartHandoff),
       zeroTokenLazy: body.zeroTokenLazy !== undefined ? Boolean(body.zeroTokenLazy) : Boolean(settings.zeroTokenLazy),
+      autoContinue: Boolean(body.autoContinue),
+      handoffContent: String(body.handoffContent || ''),
+      handoffFilePath: String(body.handoffFilePath || ''),
+      model: String(body.model || ''),
+      relayChainDepth: Number(body.relayChainDepth) || 0,
       branchLabel: String(body.branchLabel || '').trim(),
       nextInstruction: String(body.nextInstruction || '').trim(),
       workspaceRoot: resolveFileUri(body.workspaceRoot) || activeWorkspaceRoot || '',
@@ -201,6 +191,76 @@ export function createCockpitHandlers(options = {}) {
       customLauncher: options.customLauncher || null,
       resolveProjectId: options.resolveProjectId || null,
     });
+  }
+
+  async function processRelayQueueOnce({ now = Date.now() } = {}) {
+    const job = claimNextReadyRelayJob({ pluginDataDir, now });
+    if (!job) return { processed: false };
+    const settings = loadSettings(pluginDataDir);
+    try {
+      const forkRes = await handleFork({
+        conversationId: job.conversationId,
+        mode: FORK_MODES.HANDOFF,
+        autoContinue: true,
+        zeroTokenLazy: false,
+        handoffFilePath: job.handoffFile || '',
+        model: job.model || settings.autoRelayModel || 'pro',
+        relayChainDepth: (Number(job.chainDepth) || 0) + 1,
+        workspaceRoot: job.workspaceRoot || '',
+        createSnapshot: settings.autoSnapshot,
+        createWorktree: false,
+      });
+      const completed = completeRelayJob(job.id, forkRes, { pluginDataDir, now: Date.now() });
+      if (typeof options.onRelayLaunched === 'function') {
+        options.onRelayLaunched(forkRes, completed);
+      }
+      return { processed: true, job: completed, result: forkRes };
+    } catch (err) {
+      const errRes = { ok: false, error: err?.message || String(err) };
+      const completed = completeRelayJob(job.id, errRes, { pluginDataDir, now: Date.now() });
+      if (typeof options.onRelayLaunched === 'function') {
+        options.onRelayLaunched(errRes, completed);
+      }
+      return { processed: true, job: completed, result: errRes };
+    }
+  }
+
+  async function handleRelayConfirm(body = {}) {
+    const res = confirmRelayJob(String(body.jobId || ''), { pluginDataDir });
+    if (!res.ok) return res;
+    if (res.alreadyLaunched) return res;
+    const processed = await processRelayQueueOnce();
+    return {
+      ok: true,
+      job: processed.job || res.job,
+      result: processed.result || null,
+    };
+  }
+
+  function handleRelayDismiss(body = {}) {
+    const res = dismissRelayJob(String(body.jobId || ''), { pluginDataDir });
+    if (typeof options.onRelayDismissed === 'function') {
+      options.onRelayDismissed(res);
+    }
+    return res;
+  }
+
+  async function handleRelayTrigger(body = {}) {
+    const convId = resolveActiveConvId(body.conversationId);
+    if (!convId) return { ok: false, error: '当前没有可接力的会话' };
+    const settings = loadSettings(pluginDataDir);
+    const confirmMode = body.confirmMode || settings.autoRelayConfirmMode;
+    const queued = queueManualRelay(convId, {
+      pluginDataDir,
+      appDataDir,
+      confirmMode,
+    });
+    if (!queued.ok) return queued;
+    if (queued.job.status === 'queued') {
+      const processed = await processRelayQueueOnce();
+      return { ok: true, job: processed.job || queued.job, result: processed.result || null };
+    }
+    return queued;
   }
 
   function handleBranchMeta(body = {}) {
@@ -315,6 +375,10 @@ export function createCockpitHandlers(options = {}) {
     handleSnapshotRestoreFile,
     handleWorktreeRemove,
     handleSettingsUpdate,
+    handleRelayConfirm,
+    handleRelayDismiss,
+    handleRelayTrigger,
+    processRelayQueueOnce,
   };
 }
 
@@ -325,6 +389,7 @@ function readLocalAsset(name) {
 function installHotReloadWatcher() {
   const watched = [
     path.join(__dirname, 'main.mjs'),
+    path.join(__dirname, '..', '..', 'lib', 'auto-relay.mjs'),
     path.join(__dirname, '..', '..', 'lib', 'fork-engine.mjs'),
     path.join(__dirname, '..', '..', 'lib', 'transcript-parser.mjs'),
     path.join(__dirname, '..', '..', 'lib', 'os-explorer.mjs'),
@@ -416,6 +481,12 @@ async function startStandalone(port = 4173) {
         sendJson(await handlers.handleWorktreeRemove(await readBody()));
       } else if (pathname === '/api/settings' && req.method === 'POST') {
         sendJson(await handlers.handleSettingsUpdate(await readBody()));
+      } else if (pathname === '/api/relay/confirm' && req.method === 'POST') {
+        sendJson(await handlers.handleRelayConfirm(await readBody()));
+      } else if (pathname === '/api/relay/dismiss' && req.method === 'POST') {
+        sendJson(handlers.handleRelayDismiss(await readBody()));
+      } else if (pathname === '/api/relay/trigger' && req.method === 'POST') {
+        sendJson(await handlers.handleRelayTrigger(await readBody()));
       } else {
         sendJson({ ok: false, error: 'Not Found' }, 404);
       }
@@ -471,6 +542,8 @@ async function startSidecar() {
   let handlers = null;
   const cdpBridge = createCdpBridge({
     onForkRequest: async (payload) => handlers.handleFork(payload),
+    onRelayConfirm: async (jobId) => handlers.handleRelayConfirm({ jobId }),
+    onRelayDismiss: async (jobId) => handlers.handleRelayDismiss({ jobId }),
     onResolveWorkspace: async (convId) => {
       if (convId && isValidConversationId(convId)) {
         const parsed = parseConversationTranscript(convId, { appDataDir: resolveAppDataDir() });
@@ -506,11 +579,13 @@ async function startSidecar() {
         percent: state.conversation.context?.percent || 0,
         usedTokens: state.conversation.context?.usedTokens || 0,
         limitTokens: state.conversation.context?.limitTokens || DEFAULT_COMPACTION_LIMIT,
+        tokenSource: state.conversation.context?.tokenSource || 'estimated',
         level: state.conversation.context?.level || 'healthy',
         turnCount: state.conversation.turnCount || 0,
         branchCount: state.forkTree?.totalBranches || 1,
         artifactCount: state.conversation.artifacts?.length || 0,
         turns: state.conversation.turns || [],
+        relay: state.relay || null,
       };
     },
   });
@@ -537,21 +612,39 @@ async function startSidecar() {
     getCdpStatus: () => cdpBridge.status(),
     setCdpEnabled: (enabled) => cdpBridge.setEnabled(enabled),
     resolveProjectId: resolveSourceProjectId,
+    onRelayLaunched: (res) => cdpBridge.broadcastRelayComplete(res),
+    onRelayDismissed: () => cdpBridge.broadcastHideRelayBanner(),
     customLauncher: async (prompt, meta = {}) => {
       const projectId = await resolveSourceProjectId(meta?.parentId);
-      const res = app.startConversation(prompt, {
-        model: 'flash',
-        ...(projectId ? { projectId } : {}),
-      });
+      const requestedModel = meta?.autoContinue ? meta?.model || 'pro' : 'flash';
+      let usedModel = requestedModel;
+      let res;
+      try {
+        res = app.startConversation(prompt, {
+          model: requestedModel,
+          ...(projectId ? { projectId } : {}),
+        });
+      } catch (err) {
+        if (requestedModel !== 'flash') {
+          usedModel = 'flash';
+          res = app.startConversation(prompt, {
+            model: 'flash',
+            ...(projectId ? { projectId } : {}),
+          });
+        } else {
+          throw err;
+        }
+      }
       const newId = extractConversationIdDeep(res);
       console.log(
-        `[agy-fork-explorer] Fork launched: parent=${meta?.parentId || '?'} -> child=${newId || 'pending'} project=${projectId || '(default)'} model=flash`,
+        `[agy-fork-explorer] ${meta?.autoContinue ? 'Auto-Relay' : 'Fork'} launched: parent=${meta?.parentId || '?'} -> child=${newId || 'pending'} project=${projectId || '(default)'} model=${usedModel}`,
       );
       return {
         launched: Boolean(newId),
         channel: 'sidecar_sdk',
         conversationId: newId,
         projectId,
+        model: usedModel,
       };
     },
   });
@@ -559,6 +652,31 @@ async function startSidecar() {
   if (initialSettings.cdpEnabled) {
     cdpBridge.start();
   }
+
+  // Lightweight 1s watcher for Scheme B + C Auto-Relay jobs (countdown broadcast + zero-delay launch)
+  let relayBusy = false;
+  let lastBroadcastJobId = '';
+  const relayTick = async () => {
+    if (relayBusy) return;
+    relayBusy = true;
+    try {
+      const snap = listRelaySnapshot({ pluginDataDir });
+      if (snap.activeJob && snap.activeJob.status === 'awaiting_confirm') {
+        lastBroadcastJobId = snap.activeJob.id;
+        cdpBridge.broadcastRelayBanner(snap.activeJob);
+      } else if (lastBroadcastJobId) {
+        lastBroadcastJobId = '';
+        cdpBridge.broadcastHideRelayBanner();
+      }
+      await handlers.processRelayQueueOnce();
+    } catch (err) {
+      console.error('[agy-fork-explorer] relay tick error:', err?.message || err);
+    } finally {
+      relayBusy = false;
+    }
+  };
+  const relayTimer = setInterval(() => void relayTick(), 1000);
+  relayTimer.unref?.();
 
   installHotReloadWatcher();
 
@@ -584,9 +702,13 @@ async function startSidecar() {
   app.api('/api/snapshot/restore-file', (d) => handlers.handleSnapshotRestoreFile(d), 'POST');
   app.api('/api/worktree/remove', (d) => handlers.handleWorktreeRemove(d), 'POST');
   app.api('/api/settings', (d) => handlers.handleSettingsUpdate(d), 'POST');
+  app.api('/api/relay/confirm', (d) => handlers.handleRelayConfirm(d), 'POST');
+  app.api('/api/relay/dismiss', (d) => handlers.handleRelayDismiss(d), 'POST');
+  app.api('/api/relay/trigger', (d) => handlers.handleRelayTrigger(d), 'POST');
 
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.once(sig, async () => {
+      clearInterval(relayTimer);
       await cdpBridge.stop().catch(() => {});
       process.exit(0);
     });

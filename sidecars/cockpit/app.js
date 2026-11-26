@@ -15,7 +15,7 @@
     tree: null,
     historyItems: null,
     cdpOpen: false,
-    settingsOpen: false,
+    settingsOpen: params.get('settings') === '1',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -247,16 +247,69 @@
     if (!state.settingsOpen || !state.data) return;
     clear(box);
     const cfg = state.data.settings || {};
+
+    const relayEnabledCb = el('input', { type: 'checkbox', checked: cfg.autoRelayEnabled !== false });
+    let confirmModeVal = cfg.autoRelayConfirmMode === 'silent' ? 'silent' : 'countdown';
+    const btnCountdown = el('button', {
+      type: 'button',
+      className: `mode-pill${confirmModeVal === 'countdown' ? ' active' : ''}`,
+      text: '⏱ 5秒倒计时胶囊',
+    });
+    const btnSilent = el('button', {
+      type: 'button',
+      className: `mode-pill${confirmModeVal === 'silent' ? ' active' : ''}`,
+      text: '⚡ 0秒静默无人值守',
+    });
+    const syncConfirmBtns = () => {
+      btnCountdown.classList.toggle('active', confirmModeVal === 'countdown');
+      btnSilent.classList.toggle('active', confirmModeVal === 'silent');
+    };
+    btnCountdown.addEventListener('click', () => { confirmModeVal = 'countdown'; syncConfirmBtns(); });
+    btnSilent.addEventListener('click', () => { confirmModeVal = 'silent'; syncConfirmBtns(); });
+
+    const softInput = el('input', { className: 'input', type: 'number', value: cfg.autoRelaySoftPercent ?? 75 });
+    const hardInput = el('input', { className: 'input', type: 'number', value: cfg.autoRelayHardPercent ?? 90 });
+    const countdownInput = el('input', { className: 'input', type: 'number', value: cfg.autoRelayCountdownSec ?? 5 });
+    const maxChainInput = el('input', { className: 'input', type: 'number', value: cfg.autoRelayMaxChain ?? 3 });
+
+    const modelSel = el('select', { className: 'input' }, [
+      el('option', { value: 'pro', text: 'Pro（主力续跑，推荐）' }),
+      el('option', { value: 'flash', text: 'Flash（极速省 Token）' }),
+    ]);
+    modelSel.value = cfg.autoRelayModel === 'flash' ? 'flash' : 'pro';
+
     const limInput = el('input', { className: 'input', type: 'number', value: cfg.compactionLimit || 256000 });
     const lazyCb = el('input', { type: 'checkbox', checked: Boolean(cfg.zeroTokenLazy) });
-    const lazyRow = el('label', { className: 'chk' }, [
-      lazyCb,
-      '⚡ 零 Token 懒启动（点 Fork 不预跑首轮 AI，直接将精简上下文填入新对话输入框）',
-    ]);
-    box.appendChild(el('div', { style: { fontWeight: '700' }, text: '⚙ 驾驶舱偏好设置' }));
-    box.appendChild(lazyRow);
-    box.appendChild(el('div', { text: '上下文自动压缩预警阈值（默认 256000 tokens）：' }));
-    box.appendChild(limInput);
+
+    box.appendChild(el('div', { style: { fontWeight: '700' }, text: '⚙ 驾驶舱与自动接力设置（方案 B + C）' }));
+    box.appendChild(
+      el('label', { className: 'chk' }, [
+        relayEnabledCb,
+        '🤖 开启高压自动 Fork 续跑（75% 亲笔交接单 + 90% 硬红线兜底）',
+      ]),
+    );
+    box.appendChild(el('div', { style: { fontSize: '10.5px', color: 'var(--muted)' }, text: '接力触发确认方式（一键切换）：' }));
+    box.appendChild(el('div', { className: 'mode-group' }, [btnCountdown, btnSilent]));
+
+    box.appendChild(
+      el('div', { className: 'settings-grid' }, [
+        el('label', { className: 'setting-field' }, ['预警线 %（自写交接单）', softInput]),
+        el('label', { className: 'setting-field' }, ['硬红线 %（强制兜底）', hardInput]),
+        el('label', { className: 'setting-field' }, ['倒计时秒数（3–15s）', countdownInput]),
+        el('label', { className: 'setting-field' }, ['防循环熔断上限（次）', maxChainInput]),
+        el('label', { className: 'setting-field' }, ['续跑默认模型', modelSel]),
+        el('label', { className: 'setting-field' }, ['压缩上限 Tokens', limInput]),
+      ]),
+    );
+
+    box.appendChild(el('div', { className: 'setting-sep' }));
+    box.appendChild(
+      el('label', { className: 'chk' }, [
+        lazyCb,
+        '⚡ 手动 Fork 零 Token 懒启动（不预跑首轮，直接填入新输入框）',
+      ]),
+    );
+
     box.appendChild(
       el('div', { className: 'quick-os-bar' }, [
         el('button', {
@@ -264,12 +317,42 @@
           text: '保存设置',
           onClick: async () => {
             await apiPost('/api/settings', {
+              autoRelayEnabled: relayEnabledCb.checked,
+              autoRelayConfirmMode: confirmModeVal,
+              autoRelaySoftPercent: Number(softInput.value) || 75,
+              autoRelayHardPercent: Number(hardInput.value) || 90,
+              autoRelayCountdownSec: Number(countdownInput.value) || 5,
+              autoRelayMaxChain: Number(maxChainInput.value) || 3,
+              autoRelayModel: modelSel.value,
               compactionLimit: Number(limInput.value) || 256000,
               zeroTokenLazy: lazyCb.checked,
             });
             state.settingsOpen = false;
             await refreshAll();
-            showToast(lazyCb.checked ? '已开启 ⚡ 零 Token 懒启动模式' : '设置已保存');
+            const modeDesc = !relayEnabledCb.checked
+              ? '已关闭自动接力'
+              : confirmModeVal === 'silent'
+                ? '已切换为 ⚡ 0 秒静默无人值守接力'
+                : `已切换为 ⏱ ${Number(countdownInput.value) || 5} 秒倒计时确认胶囊`;
+            showToast(modeDesc);
+          },
+        }),
+        el('button', {
+          className: 'btn btn-xs btn-teal',
+          text: '🧪 测试倒计时接力',
+          title: '在当前会话触发一次 5 秒倒计时接力演练（可随时点「暂不」取消）',
+          onClick: async () => {
+            const res = await apiPost('/api/relay/trigger', {
+              conversationId: getTargetConvId(),
+              confirmMode: 'countdown',
+            });
+            if (res.ok) {
+              state.settingsOpen = false;
+              await refreshAll();
+              showToast('已弹出倒计时接力胶囊，可点击「立即接力」或「暂不」');
+            } else {
+              showToast(res.error || '触发失败', true);
+            }
           },
         }),
         el('button', {
@@ -284,8 +367,109 @@
     );
   }
 
+  let relayCountdownTimer = 0;
+  function renderRelayBanner() {
+    const box = $('relayBanner');
+    if (!box) return;
+    clearInterval(relayCountdownTimer);
+    relayCountdownTimer = 0;
+
+    const relay = state.data?.relay;
+    const job = relay?.activeJob;
+    if (!job) {
+      // Show a subtle one-click jump strip if a recent relay just launched within the last 3 minutes
+      const recentLaunched = (relay?.recentJobs || []).find(
+        (j) => j.status === 'launched' && j.childConversationId && Date.now() - (j.launchedAt || 0) < 180_000,
+      );
+      if (recentLaunched && recentLaunched.conversationId === state.data?.conversationId) {
+        box.className = 'relay-strip done';
+        clear(box);
+        box.appendChild(
+          el('div', { className: 'relay-top' }, [
+            el('span', { className: 'relay-title', text: `✨ 已自动接力至新分支「${recentLaunched.branchLabel || 'relay'}」` }),
+            el('button', {
+              className: 'btn btn-xs btn-teal',
+              text: '打开新分支 →',
+              onClick: () => jumpToConversation(recentLaunched.childConversationId),
+            }),
+          ]),
+        );
+        return;
+      }
+      box.className = 'relay-strip hidden';
+      clear(box);
+      return;
+    }
+
+    const isHard = job.triggerMode === 'hard_failsafe';
+    box.className = `relay-strip${isHard ? ' hard' : ''}`;
+    clear(box);
+
+    const titleEl = el('span', { className: 'relay-title' });
+    const fillEl = el('div', { className: 'relay-progress-fill', style: { width: '100%' } });
+    const totalMs = Math.max(1000, (Number(job.countdownSec) || 5) * 1000);
+
+    const ops = el('div', { className: 'row-ops' });
+    if (job.status === 'awaiting_confirm') {
+      ops.appendChild(
+        el('button', {
+          className: 'btn btn-xs btn-primary',
+          text: '立即接力',
+          onClick: async () => {
+            const res = await apiPost('/api/relay/confirm', { jobId: job.id });
+            showToast(res.ok ? '⚡ 正在切入低水位新分支续跑…' : res.error || '操作失败', !res.ok);
+            await refreshAll();
+            if (res?.result?.launched && res.result.newConversationId) {
+              jumpToConversation(res.result.newConversationId);
+            }
+          },
+        }),
+      );
+      ops.appendChild(
+        el('button', {
+          className: 'btn btn-xs',
+          text: '暂不',
+          onClick: async () => {
+            const res = await apiPost('/api/relay/dismiss', { jobId: job.id });
+            showToast(res.ok ? `已暂停本次接力（红线 ${res.dismissedUntilPct || 90}% 前不再打扰）` : res.error || '取消失败', !res.ok);
+            await refreshAll();
+          },
+        }),
+      );
+    }
+
+    box.appendChild(el('div', { className: 'relay-top' }, [titleEl, ops]));
+    box.appendChild(el('div', { className: 'relay-progress' }, [fillEl]));
+
+    const updateTick = () => {
+      if (job.status !== 'awaiting_confirm') {
+        titleEl.textContent = `⚡ 正在创建低水位接力分支（${job.percent || 0}%）…`;
+        fillEl.style.width = '100%';
+        return;
+      }
+      const remMs = Math.max(0, (Number(job.executeAfter) || Date.now()) - Date.now());
+      const remSec = Math.ceil(remMs / 1000);
+      const tag = isHard ? '🛡️ 兜底接力' : '✨ 亲笔交接单';
+      titleEl.textContent =
+        remSec > 0
+          ? `${tag} · ${job.percent || 0}% · ${remSec}s 后自动 Fork 续跑`
+          : `${tag} · 正在启动新分支续跑…`;
+      fillEl.style.width = `${Math.max(0, Math.min(100, (remMs / totalMs) * 100))}%`;
+      if (remMs <= 0) {
+        clearInterval(relayCountdownTimer);
+        relayCountdownTimer = 0;
+        setTimeout(() => void refreshAll(), 900);
+      }
+    };
+    updateTick();
+    if (job.status === 'awaiting_confirm') {
+      relayCountdownTimer = setInterval(updateTick, 150);
+    }
+  }
+
   function renderContextBar() {
     const ctx = state.data?.conversation?.context;
+    const cfg = state.data?.settings || {};
     const bar = $('contextBar');
     if (!ctx) {
       bar.className = 'ctx-strip';
@@ -296,13 +480,19 @@
     }
     const level = ctx.level || 'healthy';
     bar.className = `ctx-strip ${level === 'healthy' ? '' : level}`;
+    const srcTag = ctx.tokenSource === 'api' ? '实时' : '估算';
+    const relayTag = cfg.autoRelayEnabled === false
+      ? ''
+      : cfg.autoRelayConfirmMode === 'silent'
+        ? ` · ⚡${cfg.autoRelaySoftPercent || 75}%静默`
+        : ` · ⏱${cfg.autoRelaySoftPercent || 75}%接力`;
     const warnSuffix =
       level === 'critical'
-        ? ' · ⚠️ 即将触发静默压缩！'
+        ? ' · 高压'
         : level === 'warning'
-          ? ' · 建议轻装 Fork'
+          ? ' · 预警'
           : '';
-    $('ctxTitle').textContent = `🧠 Context ${formatK(ctx.usedTokens)} / ${formatK(ctx.limitTokens)}${warnSuffix}`;
+    $('ctxTitle').textContent = `🧠 ${formatK(ctx.usedTokens)}/${formatK(ctx.limitTokens)} (${srcTag})${warnSuffix}${relayTag}`;
     $('ctxBadge').textContent = `${ctx.percent}%`;
     $('ctxFill').style.width = `${Math.min(100, ctx.percent)}%`;
   }
@@ -913,6 +1103,7 @@
       }
       renderTopHeader();
       renderContextBar();
+      renderRelayBanner();
       renderForkTab();
       renderExplorerTab();
       renderHistoryTab();
@@ -1102,4 +1293,9 @@
     });
   }
   void refreshAll();
+  setInterval(() => {
+    if (!document.hidden && !state.settingsOpen && !state.cdpOpen) {
+      void refreshAll();
+    }
+  }, 3500);
 })();

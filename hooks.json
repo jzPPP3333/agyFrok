@@ -1,0 +1,25 @@
+{
+  "agy-fork-auto-relay": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node hooks/on-hook.mjs PreInvocation || sh ./bin/run-node.sh hooks/on-hook.mjs PreInvocation",
+        "timeout": 6
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "node hooks/on-hook.mjs PostInvocation || sh ./bin/run-node.sh hooks/on-hook.mjs PostInvocation",
+        "timeout": 6
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node hooks/on-hook.mjs Stop || sh ./bin/run-node.sh hooks/on-hook.mjs Stop",
+        "timeout": 6
+      }
+    ]
+  }
+}
